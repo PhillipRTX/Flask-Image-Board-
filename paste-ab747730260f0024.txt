@@ -1,0 +1,225 @@
+import io
+from flask import Flask, request, redirect, render_template_string, make_response, send_file
+from werkzeug.utils import secure_filename
+
+app = Flask(__name__)
+app.config['MAX_CONTENT_LENGTH'] = 4 * 1024 * 1024
+ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif'}
+
+posts = []
+image_store = {}
+
+def allowed_file(filename):
+    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+
+@app.route('/image/<filename>')
+def get_image(filename):
+    if filename in image_store:
+        return send_file(io.BytesIO(image_store[filename]), mimetype='image/jpeg')
+    return "Not found", 404
+
+@app.route('/', methods=['GET', 'POST'])
+def index():
+    username = request.cookies.get('username', '')
+    category_filter = request.args.get('category')
+
+    if request.method == 'POST':
+        username = request.form.get('username', 'Anonymous')
+        reply_to = request.form.get('reply_to')
+        category = request.form.get('category', 'general')
+        text = request.form.get('message', '')
+        file = request.files.get('image')
+        filename = ''
+
+        if file and allowed_file(file.filename):
+            filename = secure_filename(file.filename)
+            image_store[filename] = file.read()
+
+        if reply_to and reply_to.isdigit():
+            index = int(reply_to)
+            if 0 <= index < len(posts):
+                posts[-(index + 1)].setdefault('replies', []).append({'user': username, 'text': text})
+        elif text or filename:
+            posts.append({'user': username, 'text': text, 'image': filename, 'category': category, 'replies': []})
+
+        resp = make_response(redirect('/'))
+        resp.set_cookie('username', username, max_age=60 * 60 * 24 * 30)
+        return resp
+
+    filtered_posts = [p for p in reversed(posts) if not category_filter or p['category'] == category_filter]
+
+    return render_template_string('''<!DOCTYPE html>
+<html>
+<head>
+    <title>Schrödinger - Chan</title>
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg: #0d1117;
+            --fg: #c9d1d9;
+            --muted: #8b949e;
+            --accent: #993b3b;
+            --border: #30363d;
+            --highlight: #e67e22;
+        }
+        body {
+            background-color: var(--bg);
+            color: var(--fg);
+            font-family: 'IBM Plex Mono', monospace;
+            font-size: 16px;
+            margin: 0;
+            padding: 0;
+        }
+        .container {
+            max-width: 700px;
+            margin: 2rem auto;
+            padding: 2rem;
+            background-color: #161b22;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            box-shadow: 0 0 10px rgba(0,0,0,0.3);
+        }
+        h1, h5 {
+            text-align: center;
+            margin: 0 0 1rem 0;
+            font-weight: 400;
+        }
+        .nav {
+            text-align: center;
+            margin: 1rem 0;
+        }
+        .nav a {
+            color: var(--accent);
+            text-decoration: none;
+            margin: 0 0.5rem;
+        }
+        form {
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+        }
+        input[type="text"], textarea, select {
+            background-color: #0d1117;
+            color: var(--fg);
+            border: 1px solid var(--border);
+            padding: 0.6rem;
+            border-radius: 4px;
+        }
+        .file-upload {
+            background-color: var(--accent);
+            color: black;
+            padding: 0.6rem 1rem;
+            border-radius: 4px;
+            cursor: pointer;
+            width: fit-content;
+        }
+        .file-upload:hover {
+            background-color: var(--highlight);
+        }
+        .file-upload input[type="file"] {
+            display: none;
+        }
+        button {
+            background-color: var(--accent);
+            color: black;
+            border: none;
+            padding: 0.6rem;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        button:hover {
+            background-color: var(--highlight);
+        }
+        .post {
+            margin-top: 2rem;
+            padding: 1rem;
+            background-color: #0d1117;
+            border-left: 4px solid var(--accent);
+            border-radius: 4px;
+        }
+        .post img {
+            max-width: 100%;
+            max-height: 300px;
+            margin-top: 1rem;
+            border-radius: 4px;
+        }
+        .category-label {
+            font-size: 0.8rem;
+            color: var(--muted);
+            margin-bottom: 0.3rem;
+        }
+        .reply {
+            font-size: 0.9rem;
+            margin-left: 1rem;
+            border-left: 2px dashed var(--accent);
+            padding-left: 0.5rem;
+            color: var(--muted);
+            margin-top: 0.5rem;
+        }
+        summary {
+            cursor: pointer;
+            font-size: 0.9rem;
+            color: var(--accent);
+            margin-top: 0.5rem;
+        }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h1>Schrödinger - Chan</h1>
+    <h5>This board maintains no logs. No archives are kept. No compliance is enforced. All transmissions exist only in volatile memory. Brief. Private. Untraceable. By design.</h5>
+    <div class="nav">
+        <a href="/">/ All /</a>
+        <a href="/?category=general">/ General /</a>
+        <a href="/?category=memes">/ Memes /</a>
+        <a href="/?category=politics">/ Politics /</a>
+        <a href="/?category=tech">/ Tech /</a>
+        <a href="/?category=nsfw">/ NSFW /</a>
+    </div>
+
+    <form method="post" enctype="multipart/form-data">
+        <input type="text" name="username" value="{{ username }}" placeholder="Your name..." />
+        <select name="category">
+            <option value="general">General</option>
+            <option value="memes">Memes</option>
+            <option value="politics">Politics</option>
+            <option value="tech">Tech</option>
+            <option value="nsfw">NSFW</option>
+        </select>
+        <textarea name="message" rows="3" placeholder="Say something (optional)..."></textarea>
+        <label class="file-upload"><input type="file" name="image" accept="image/*"> Choose an image</label>
+        <button type="submit">Post</button>
+    </form>
+
+    {% for post in posts %}
+    <div class="post">
+        <div class="category-label">[{{ post.category|capitalize }}]</div>
+        <strong>{{ post.user }}</strong>: {{ post.text }}
+        {% if post.image %}
+        <img src="/image/{{ post.image }}">
+        {% endif %}
+        {% if post.replies and post.replies|length > 0 %}
+        <details class="reply-section">
+            <summary>View Replies ({{ post.replies|length }})</summary>
+            {% for r in post.replies %}
+            <div class="reply"><strong>{{ r.user }}</strong>: {{ r.text }}</div>
+            {% endfor %}
+        </details>
+        {% endif %}
+        <form method="post" style="margin-top:1rem;">
+            <input type="hidden" name="reply_to" value="{{ loop.index0 }}">
+            <input type="text" name="username" value="{{ username }}" placeholder="Your name..." />
+            <textarea name="message" rows="2" placeholder="Reply..."></textarea>
+            <button type="submit">Reply</button>
+        </form>
+    </div>
+    {% else %}
+    <p style="text-align:center; color:var(--muted);">No posts yet — start the thread!</p>
+    {% endfor %}
+</div>
+</body>
+</html>
+''', posts=filtered_posts, username=username)
+
+if __name__ == '__main__':
+    app.run(host='127.0.0.1', port=8080)
